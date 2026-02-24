@@ -85,14 +85,99 @@ KMEANS_K_RANGE = range(2, 11)                   # range tested in elbow plot
 # Regime one-hot column names (auto-generated from OPTIMAL_K)
 REGIME_FEATURES = [f"regime_{i}" for i in range(OPTIMAL_K)]
 
+# Step 1 final features (before Step 2 additions)
+STEP1_FINAL_FEATURES = (
+    CORE_FEATURES
+    + TEMPORAL_FEATURES
+    + DOMAIN_FEATURES
+    + REGIME_FEATURES
+)
+
+# ──────────────────────────────────────────────────────────────
+# STEP 2 — LAGGED VARIABLES
+# ──────────────────────────────────────────────────────────────
+
+# Lag offsets in number of 15-minute intervals
+LAG_OFFSETS = {
+    1: "15min",      # previous interval
+    4: "1h",         # 1 hour ago
+    96: "24h",       # 24 hours ago
+}
+
+# Columns on which to create lags (available in both train AND test)
+LAG_COLUMNS = ["wind", "solar", "load", "net_load"]
+
+# Spread lags — only available in training data (test has no spread)
+LAG_COLUMNS_TRAIN_ONLY = ["spread"]
+
+# Auto-generated lag feature names
+LAG_FEATURES = [
+    f"{col}_lag_{k}" for col in LAG_COLUMNS for k in LAG_OFFSETS
+]
+LAG_FEATURES_TRAIN_ONLY = [
+    f"{col}_lag_{k}" for col in LAG_COLUMNS_TRAIN_ONLY for k in LAG_OFFSETS
+]
+
+# ──────────────────────────────────────────────────────────────
+# STEP 2 — ROLLING STATISTICS
+# ──────────────────────────────────────────────────────────────
+
+# Rolling window sizes in number of 15-minute intervals
+ROLLING_WINDOWS = {
+    4: "1h",         # 1-hour rolling window
+    96: "24h",       # 24-hour rolling window
+}
+
+# Columns on which to compute rolling stats (train + test)
+ROLLING_COLUMNS = ["wind", "solar", "load"]
+
+# Spread rolling stats — training only
+ROLLING_COLUMNS_TRAIN_ONLY = ["spread"]
+
+# Auto-generated rolling feature names
+ROLLING_FEATURES = [
+    f"{col}_rmean_{w}" for col in ROLLING_COLUMNS for w in ROLLING_WINDOWS
+] + [
+    f"{col}_rstd_{w}" for col in ROLLING_COLUMNS for w in ROLLING_WINDOWS
+]
+ROLLING_FEATURES_TRAIN_ONLY = [
+    f"{col}_rmean_{w}" for col in ROLLING_COLUMNS_TRAIN_ONLY for w in ROLLING_WINDOWS
+] + [
+    f"{col}_rstd_{w}" for col in ROLLING_COLUMNS_TRAIN_ONLY for w in ROLLING_WINDOWS
+]
+
+# ──────────────────────────────────────────────────────────────
+# STEP 2 — COMBINED SCALING LIST
+# ──────────────────────────────────────────────────────────────
+
+# All features that need StandardScaler (Step 1 + Step 2).
+# Cyclical sin/cos, is_weekend, and regime one-hots remain unscaled.
+STEP2_FEATURES_TO_SCALE = (
+    FEATURES_TO_SCALE        # Step 1: core + imbalances + domain
+    + LAG_FEATURES           # Step 2: lags (test-available)
+    + ROLLING_FEATURES       # Step 2: rolling stats (test-available)
+)
+
+# The *training* scaler also includes train-only columns so that
+# they are normalised consistently during training.
+STEP2_FEATURES_TO_SCALE_TRAIN = (
+    STEP2_FEATURES_TO_SCALE
+    + LAG_FEATURES_TRAIN_ONLY
+    + ROLLING_FEATURES_TRAIN_ONLY
+)
+
 # ──────────────────────────────────────────────────────────────
 # FINAL FEATURE VECTOR (input to the neural network)
 # ──────────────────────────────────────────────────────────────
+
+# After Step 2, the full feature vector used for modelling:
 FINAL_FEATURES = (
     CORE_FEATURES
     + TEMPORAL_FEATURES
     + DOMAIN_FEATURES
     + REGIME_FEATURES
+    + LAG_FEATURES
+    + ROLLING_FEATURES
 )
 
 # ──────────────────────────────────────────────────────────────
