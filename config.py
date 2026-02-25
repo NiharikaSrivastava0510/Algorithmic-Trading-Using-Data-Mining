@@ -181,6 +181,43 @@ FINAL_FEATURES = (
 )
 
 # ──────────────────────────────────────────────────────────────
+# STEP 3 — LSTM ARCHITECTURE
+# ──────────────────────────────────────────────────────────────
+
+# Sequence windowing
+SEQUENCE_LENGTH = 96              # 1 full day of 15-min intervals
+
+# LSTM layers
+LSTM_INPUT_SIZE = len(FINAL_FEATURES)   # 45 features
+LSTM_HIDDEN_SIZE = 128
+LSTM_NUM_LAYERS = 2
+LSTM_DROPOUT = 0.2                # dropout between stacked LSTM layers
+
+# Dense head (after LSTM)
+DENSE_HIDDEN_SIZE = 64
+DENSE_DROPOUT = 0.3
+
+# ──────────────────────────────────────────────────────────────
+# STEP 3 — TRAINING
+# ──────────────────────────────────────────────────────────────
+
+BATCH_SIZE = 256
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 1e-5               # L2 regularisation (AdamW)
+MAX_EPOCHS = 100
+GRADIENT_CLIP_NORM = 1.0          # prevent exploding gradients in LSTM
+
+# Early stopping
+EARLY_STOPPING_PATIENCE = 10     # epochs without val improvement
+
+# Learning-rate scheduler (ReduceLROnPlateau)
+SCHEDULER_FACTOR = 0.5
+SCHEDULER_PATIENCE = 5
+
+# Train/validation split (chronological — last portion held out)
+VALIDATION_FRACTION = 0.2         # last 20 % of training data
+
+# ──────────────────────────────────────────────────────────────
 # DATA INTEGRITY
 # ──────────────────────────────────────────────────────────────
 EXPECTED_INTERVAL_MINUTES = 15   # the dataset is sampled at 15-min intervals
