@@ -17,12 +17,13 @@ A data-mining project that predicts the German electricity market spread (imbala
 3. [Dataset](#dataset)
 4. [Step 1 -- Data Acquisition & Preparation](#step-1----data-acquisition--preparation)
 5. [Step 2 -- Feature Engineering & Target Definition](#step-2----feature-engineering--target-definition)
-6. [Getting Started](#getting-started)
-7. [Running the Pipeline](#running-the-pipeline)
-8. [Running Tests](#running-tests)
-9. [Configuration](#configuration)
-10. [Outputs](#outputs)
-11. [References](#references)
+6. [Step 3 -- Designing the Neural Network Architecture](#step-3----designing-the-neural-network-architecture)
+7. [Getting Started](#getting-started)
+8. [Running the Pipeline](#running-the-pipeline)
+9. [Running Tests](#running-tests)
+10. [Configuration](#configuration)
+11. [Outputs](#outputs)
+12. [References](#references)
 
 ---
 
@@ -42,6 +43,7 @@ The pipeline is built in sequential steps:
 |---|---|---|---|
 | **1** | Data Acquisition & Preparation | 21 features (core + temporal + domain + regime) | `run_step1.py` |
 | **2** | Feature Engineering & Target Definition | +24 features (lags + rolling stats) = **45 total** | `run_step2.py` |
+| **3** | Designing the Neural Network Architecture | LSTM model with 230K parameters | `run_step3.py` |
 
 ---
 
@@ -53,6 +55,7 @@ Algorithmic Trading/
 |-- config.py                        # Central configuration (paths, features, hyperparameters)
 |-- run_step1.py                     # Step 1 only pipeline
 |-- run_step2.py                     # Step 1 + Step 2 combined pipeline
+|-- run_step3.py                     # Step 3 LSTM training pipeline
 |-- requirements.txt                 # Python dependencies
 |-- .gitignore                       # Git ignore rules
 |
@@ -66,12 +69,16 @@ Algorithmic Trading/
 |   |-- lag_features.py              # 2(b) Lagged variable generation
 |   |-- rolling_features.py          # 2(c) Rolling averages and standard deviations
 |   |-- target_analysis.py           # 2(a) Target variable analysis
+|   |-- dataset.py                   # 3(a) Sequence windowing and data loading
+|   |-- model.py                     # 3(b) SpreadLSTM architecture definition
+|   |-- trainer.py                   # 3(c) Training loop with early stopping
 |   +-- visualisation.py             # Plotting functions for all steps
 |
 |-- tests/                           # Unit tests
 |   |-- __init__.py
 |   |-- test_step1.py                # 24 tests for Step 1 modules
-|   +-- test_step2.py                # 24 tests for Step 2 modules
+|   |-- test_step2.py                # 24 tests for Step 2 modules
+|   +-- test_step3.py                # 22 tests for Step 3 modules
 |
 |-- data/
 |   +-- raw/                         # Raw CSVs (gitignored; download from Kaggle)
@@ -87,7 +94,10 @@ Algorithmic Trading/
     |   |-- feature_scaler.pkl       # Fitted StandardScaler (39 features)
     |   |-- target_scaler.pkl        # Fitted StandardScaler (spread)
     |   |-- kmeans_model.pkl         # Fitted KMeans model (5 regimes)
-    |   +-- feature_config.pkl       # Feature name lists for downstream steps
+    |   |-- feature_config.pkl       # Feature name lists for downstream steps
+    |   |-- spread_lstm.pt           # Trained LSTM weights + model config
+    |   |-- training_history.csv     # Per-epoch training and validation metrics
+    |   +-- submission.csv           # Test set predictions (Kaggle submission)
     |
     +-- plots/                       # Generated visualisations
         |-- data_overview.png        # Time-series of wind, solar, load, spread
@@ -97,7 +107,10 @@ Algorithmic Trading/
         |-- spread_autocorrelation.png  # Autocorrelation bar chart
         |-- lag_scatter.png          # Spread vs lagged spread (15-min, 1-h, 24-h)
         |-- rolling_timeseries.png   # 2-week close-up with rolling mean/std bands
-        +-- feature_correlation.png  # Full 45-feature correlation heatmap
+        |-- feature_correlation.png  # Full 45-feature correlation heatmap
+        |-- training_curves.png      # Train/val loss and LR over epochs
+        |-- predictions_vs_actual_validation.png  # Scatter: predicted vs actual spread
+        +-- val_timeseries.png       # 7-day validation time-series overlay
 ```
 
 ---
@@ -241,6 +254,94 @@ After Step 2, the neural network receives **45 features**:
 
 ---
 
+## Step 3 -- Designing the Neural Network Architecture
+
+### 3(a) LSTM Network for Sequential Time-Series
+
+An **LSTM (Long Short-Term Memory)** network is used to capture the temporal dependencies in electricity market data. LSTMs are specifically designed for sequential data where long-range patterns matter -- their gating mechanism selectively remembers or forgets information across the 96-step (24-hour) input window.
+
+**Why LSTM?** The electricity spread exhibits autocorrelation at multiple time horizons (15-min, 1-hour, 24-hour). Standard feedforward networks would treat each timestep independently, losing this temporal structure. The LSTM's recurrent architecture naturally processes the ordered sequence of 15-minute intervals.
+
+**Sequence windowing:** The prepared data is segmented into sliding windows of 96 timesteps (one full day). For each window, the model predicts the spread at the final timestep. This gives the network a full 24-hour context to learn intra-day patterns (morning ramps, solar peaks, evening demand).
+
+### 3(b) Input Layer Mapping
+
+The input layer maps the 45-feature vector from Step 2 into the LSTM encoder:
+
+```
+Input shape:  (batch, 96, 45)
+              |       |    |
+              |       |    +-- 45 features per interval
+              |       +------- 96 intervals (24 hours)
+              +--------------- batch of samples
+```
+
+A 2-layer stacked LSTM processes the sequence, and only the final hidden state (capturing the full 24-hour context) is passed to the dense head.
+
+### 3(c) Dense Output Layer
+
+The output is a **single node with linear activation**, appropriate for predicting a continuous value (the spread in EUR). No sigmoid or ReLU is applied to the final layer, allowing the model to predict both positive and negative spread values.
+
+### Architecture Summary
+
+```
+SpreadLSTM(
+  LSTM Encoder:
+    Input:       45 features
+    Hidden:      128 units x 2 layers
+    Dropout:     0.2 (between LSTM layers)
+
+  Dense Head:
+    Linear:      128 -> 64  +  ReLU  +  Dropout(0.3)
+    Linear:      64  -> 1   (linear activation)
+
+  Total parameters: 230,017
+)
+```
+
+### Anti-Overfitting Measures
+
+Six complementary regularisation strategies prevent the model from memorising training noise:
+
+| Technique | Setting | Purpose |
+|---|---|---|
+| **LSTM inter-layer dropout** | 0.2 | Regularises recurrent representations between stacked layers |
+| **Dense head dropout** | 0.3 | Prevents co-adaptation in the classification head |
+| **L2 regularisation** | weight_decay = 1e-5 | Penalises large weights via AdamW optimiser |
+| **Early stopping** | patience = 10 | Halts training when validation loss stops improving |
+| **Gradient clipping** | max_norm = 1.0 | Guards against exploding gradients in LSTM backprop |
+| **LR scheduling** | ReduceLROnPlateau (factor=0.5) | Halves learning rate when validation loss plateaus |
+
+### Training Configuration
+
+| Hyperparameter | Value |
+|---|---|
+| Optimiser | AdamW |
+| Learning rate | 1e-3 |
+| Batch size | 256 |
+| Max epochs | 100 |
+| Loss function | MSE (Mean Squared Error) |
+| Train/Val split | 80% / 20% (chronological) |
+| Sequence length | 96 (24 hours) |
+| Device | CUDA > MPS > CPU (auto-detected) |
+
+### Training Results
+
+The model trains with early stopping and restores the best checkpoint:
+
+| Metric | Value |
+|---|---|
+| Best epoch | 2 / 12 |
+| Early stopped | Yes (patience=10) |
+| Validation MAE | 87.76 EUR |
+| Validation RMSE | 259.23 EUR |
+| Validation R² | 0.0085 |
+| Training time | ~218 seconds (on Apple MPS) |
+
+The low R² score is expected for this initial architecture given the extreme characteristics of the spread distribution (kurtosis = 788, heavy tails with outliers up to +/-15,000 EUR). The model successfully captures the central tendency but struggles with extreme events. Further improvements (attention mechanisms, ensemble methods, feature selection) would be explored in subsequent iterations.
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -285,21 +386,24 @@ pip install -r requirements.txt
 # Step 1 only (data acquisition + preparation)
 python run_step1.py
 
-# Step 1 + Step 2 combined (recommended — includes all features)
+# Step 1 + Step 2 combined (feature engineering)
 python run_step2.py
+
+# Step 3: LSTM training (requires Step 2 outputs)
+python run_step3.py
 
 # Custom data directory
 python run_step2.py --data-dir /path/to/your/csvs
 ```
 
-The full pipeline completes in approximately **12 seconds** and produces all outputs in the `outputs/` directory.
+Steps 1-2 complete in approximately **12 seconds**. Step 3 training takes **~3.5 minutes** on Apple MPS (longer on CPU-only machines). All outputs are written to the `outputs/` directory.
 
 ---
 
 ## Running Tests
 
 ```bash
-# Run ALL tests (48 total)
+# Run ALL tests (70 total)
 pytest tests/ -v
 
 # Step 1 tests only (24 tests)
@@ -307,6 +411,9 @@ pytest tests/test_step1.py -v
 
 # Step 2 tests only (24 tests)
 pytest tests/test_step2.py -v
+
+# Step 3 tests only (22 tests)
+pytest tests/test_step3.py -v
 ```
 
 The test suite covers:
@@ -320,6 +427,10 @@ The test suite covers:
 | `lag_features` | 9 | Lag values at correct offsets, NaN handling, train/test column split |
 | `rolling_features` | 9 | Rolling mean/std formulas, smoothing effect, zero-NaN guarantee |
 | `target_analysis` | 6 | Statistics correctness, percentile ordering, autocorrelation range |
+| `dataset` | 6 | Sequence shapes, target alignment, window slicing, edge cases |
+| `split` | 4 | Chronological ordering, no overlap, fraction correctness |
+| `model` | 7 | Output shape, float dtype, linear activation, parameter count, device |
+| `trainer` | 5 | Training loop, loss tracking, prediction shapes, early stopping |
 
 ---
 
@@ -334,7 +445,14 @@ All settings are centralised in [`config.py`](config.py):
 | `OPTIMAL_K` | `5` | Number of K-Means clusters |
 | `LAG_OFFSETS` | `{1, 4, 96}` | Lag intervals (15-min, 1-h, 24-h) |
 | `ROLLING_WINDOWS` | `{4, 96}` | Rolling window sizes (1-h, 24-h) |
-| `EXPECTED_INTERVAL_MINUTES` | `15` | Expected gap between timestamps |
+| `SEQUENCE_LENGTH` | `96` | LSTM input window (24 hours) |
+| `LSTM_HIDDEN_SIZE` | `128` | LSTM hidden state dimension |
+| `LSTM_NUM_LAYERS` | `2` | Number of stacked LSTM layers |
+| `BATCH_SIZE` | `256` | Training batch size |
+| `LEARNING_RATE` | `1e-3` | Initial AdamW learning rate |
+| `MAX_EPOCHS` | `100` | Maximum training epochs |
+| `EARLY_STOPPING_PATIENCE` | `10` | Epochs without improvement before stopping |
+| `VALIDATION_FRACTION` | `0.2` | Chronological train/val split ratio |
 | `RANDOM_STATE` | `42` | Global seed for reproducibility |
 
 Feature lists (`CORE_FEATURES`, `TEMPORAL_FEATURES`, `DOMAIN_FEATURES`, `REGIME_FEATURES`, `LAG_FEATURES`, `ROLLING_FEATURES`, `FINAL_FEATURES`) are also defined here so every module draws from a single source of truth.
@@ -343,18 +461,21 @@ Feature lists (`CORE_FEATURES`, `TEMPORAL_FEATURES`, `DOMAIN_FEATURES`, `REGIME_
 
 ## Outputs
 
-After running `run_step2.py`, the `outputs/` directory contains:
+After running the full pipeline (`run_step2.py` then `run_step3.py`), the `outputs/` directory contains:
 
 ### Artefacts (`outputs/artefacts/`)
 
-| File | Description |
-|---|---|
-| `train_prepared.csv` | 140,157 rows x 64 columns -- fully featured, scaled training data |
-| `test_prepared.csv` | 24,138 rows x 55 columns -- fully featured, scaled test data |
-| `feature_scaler.pkl` | Fitted `StandardScaler` for 39 numerical features |
-| `target_scaler.pkl` | Fitted `StandardScaler` for the spread target (inverse-transform predictions back to EUR) |
-| `kmeans_model.pkl` | Fitted `KMeans` model (k=5) for regime assignment on new data |
-| `feature_config.pkl` | Python dictionary with all feature name lists for downstream steps |
+| File | Step | Description |
+|---|---|---|
+| `train_prepared.csv` | 2 | 140,157 rows x 64 columns -- fully featured, scaled training data |
+| `test_prepared.csv` | 2 | 24,138 rows x 55 columns -- fully featured, scaled test data |
+| `feature_scaler.pkl` | 2 | Fitted `StandardScaler` for 39 numerical features |
+| `target_scaler.pkl` | 2 | Fitted `StandardScaler` for the spread target |
+| `kmeans_model.pkl` | 1 | Fitted `KMeans` model (k=5) for regime assignment |
+| `feature_config.pkl` | 2 | Feature name lists for downstream steps |
+| `spread_lstm.pt` | 3 | Trained LSTM model weights, config, and validation metrics |
+| `training_history.csv` | 3 | Per-epoch train loss, val loss, and learning rate |
+| `submission.csv` | 3 | 24,138 test set predictions formatted for Kaggle submission |
 
 ### Plots (`outputs/plots/`)
 
@@ -368,6 +489,9 @@ After running `run_step2.py`, the `outputs/` directory contains:
 | `lag_scatter.png` | 2 | Spread vs lagged spread at 15-min, 1-h, 24-h with correlation |
 | `rolling_timeseries.png` | 2 | 2-week close-up of load/wind/solar with rolling mean and std bands |
 | `feature_correlation.png` | 2 | Full 45-feature correlation heatmap |
+| `training_curves.png` | 3 | Train/val loss and learning rate schedule over epochs |
+| `predictions_vs_actual_validation.png` | 3 | Scatter plot of predicted vs actual spread (EUR) |
+| `val_timeseries.png` | 3 | 7-day overlay of actual and predicted spread on validation set |
 
 ---
 

@@ -406,3 +406,155 @@ def plot_feature_correlation(
     fig.savefig(path)
     plt.close(fig)
     return path
+
+
+# ══════════════════════════════════════════════════════════════
+# STEP 3 — PLOTS
+# ══════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────
+# TRAINING CURVES
+# ──────────────────────────────────────────────────────────────
+
+def plot_training_curves(
+    history: list,
+    save_dir: str | None = None,
+) -> str:
+    """
+    Plot training and validation loss curves with LR overlay.
+
+    Parameters
+    ----------
+    history : list[EpochMetrics]
+        From ``TrainingResult.history``.
+
+    Returns the path to the saved PNG.
+    """
+    save_dir = save_dir or cfg.PLOT_DIR
+
+    epochs = [m.epoch for m in history]
+    train_loss = [m.train_loss for m in history]
+    val_loss = [m.val_loss for m in history]
+    lrs = [m.learning_rate for m in history]
+
+    best_epoch = epochs[np.argmin(val_loss)]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
+                                    gridspec_kw={"height_ratios": [3, 1]})
+
+    # Loss curves
+    ax1.plot(epochs, train_loss, label="Train Loss", linewidth=1.5, color="#2196F3")
+    ax1.plot(epochs, val_loss, label="Val Loss", linewidth=1.5, color="#E91E63")
+    ax1.axvline(best_epoch, color="green", linestyle="--", alpha=0.7,
+                label=f"Best epoch = {best_epoch}")
+    ax1.set_ylabel("MSE Loss")
+    ax1.set_title("Training and Validation Loss Curves")
+    ax1.legend(fontsize=9)
+    ax1.set_yscale("log")
+
+    # Learning rate
+    ax2.plot(epochs, lrs, color="#FF9800", linewidth=1.5)
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Learning Rate")
+    ax2.set_yscale("log")
+
+    plt.tight_layout()
+    path = os.path.join(save_dir, "training_curves.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+# ──────────────────────────────────────────────────────────────
+# PREDICTIONS VS ACTUAL
+# ──────────────────────────────────────────────────────────────
+
+def plot_predictions_vs_actual(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    title_suffix: str = "Validation",
+    save_dir: str | None = None,
+) -> str:
+    """
+    Scatter plot and residual histogram for predicted vs actual spread.
+
+    Returns the path to the saved PNG.
+    """
+    save_dir = save_dir or cfg.PLOT_DIR
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Scatter: predicted vs actual
+    ax1.scatter(y_true, y_pred, alpha=0.05, s=1, color="#2196F3")
+    lims = [
+        min(y_true.min(), y_pred.min()),
+        max(y_true.max(), y_pred.max()),
+    ]
+    ax1.plot(lims, lims, "r--", linewidth=1, label="Perfect prediction")
+    ax1.set_xlabel("Actual Spread (EUR)")
+    ax1.set_ylabel("Predicted Spread (EUR)")
+    ax1.set_title(f"Predicted vs Actual — {title_suffix}")
+    ax1.legend(fontsize=8)
+
+    # Residual histogram
+    residuals = y_pred - y_true
+    ax2.hist(residuals, bins=200, color="#9C27B0", alpha=0.7, edgecolor="none")
+    ax2.axvline(0, color="red", linestyle="--", linewidth=1)
+    ax2.set_xlabel("Residual (Predicted − Actual) EUR")
+    ax2.set_ylabel("Frequency")
+    ax2.set_title(f"Residual Distribution — {title_suffix}")
+
+    # Stats annotation
+    mae = np.mean(np.abs(residuals))
+    rmse = np.sqrt(np.mean(residuals ** 2))
+    ax2.annotate(
+        f"MAE = {mae:.2f}\nRMSE = {rmse:.2f}",
+        xy=(0.95, 0.95), xycoords="axes fraction",
+        fontsize=10, ha="right", va="top",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.7),
+    )
+
+    plt.tight_layout()
+    fname = f"predictions_vs_actual_{title_suffix.lower().replace(' ', '_')}.png"
+    path = os.path.join(save_dir, fname)
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+# ──────────────────────────────────────────────────────────────
+# VALIDATION TIME-SERIES COMPARISON
+# ──────────────────────────────────────────────────────────────
+
+def plot_val_timeseries(
+    dates: np.ndarray,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    n_days: int = 7,
+    save_dir: str | None = None,
+) -> str:
+    """
+    Overlay actual vs predicted spread over a 1-week window.
+
+    Returns the path to the saved PNG.
+    """
+    save_dir = save_dir or cfg.PLOT_DIR
+
+    # Take the first n_days of validation
+    n_points = min(cfg.INTERVALS_PER_DAY * n_days, len(y_true))
+
+    fig, ax = plt.subplots(figsize=(16, 5))
+    ax.plot(dates[:n_points], y_true[:n_points],
+            linewidth=0.8, color="#2196F3", alpha=0.8, label="Actual")
+    ax.plot(dates[:n_points], y_pred[:n_points],
+            linewidth=0.8, color="#E91E63", alpha=0.8, label="Predicted")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Spread (EUR)")
+    ax.set_title(f"Actual vs Predicted Spread — First {n_days} Days of Validation")
+    ax.legend(fontsize=9)
+    plt.tight_layout()
+
+    path = os.path.join(save_dir, "val_timeseries.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
