@@ -4,11 +4,7 @@
 
 A data-mining project that predicts the German electricity market spread (imbalance price minus day-ahead price) for every 15-minute interval, using the [ENSIMAG IF 2025 Algorithmic Trading](https://www.kaggle.com/competitions/ensimag-if-2025/data) competition dataset.
 
-> **University of Southampton** -- COMP6248 Data Mining Coursework
->
-> Vaishnavi Kanduri, Niharika Srivastava, Hitesh Pawar, Sreekar Mannem, Satyam Shaw, Gokul Palaniandi
 
----
 
 ## Table of Contents
 
@@ -18,12 +14,13 @@ A data-mining project that predicts the German electricity market spread (imbala
 4. [Step 1 -- Data Acquisition & Preparation](#step-1----data-acquisition--preparation)
 5. [Step 2 -- Feature Engineering & Target Definition](#step-2----feature-engineering--target-definition)
 6. [Step 3 -- Designing the Neural Network Architecture](#step-3----designing-the-neural-network-architecture)
-7. [Getting Started](#getting-started)
-8. [Running the Pipeline](#running-the-pipeline)
-9. [Running Tests](#running-tests)
-10. [Configuration](#configuration)
-11. [Outputs](#outputs)
-12. [References](#references)
+7. [Step 4 -- Training & Mitigating Overfitting](#step-4----training--mitigating-overfitting)
+8. [Getting Started](#getting-started)
+9. [Running the Pipeline](#running-the-pipeline)
+10. [Running Tests](#running-tests)
+11. [Configuration](#configuration)
+12. [Outputs](#outputs)
+13. [References](#references)
 
 ---
 
@@ -53,9 +50,9 @@ The pipeline is built in sequential steps:
 Algorithmic Trading/
 |
 |-- config.py                        # Central configuration (paths, features, hyperparameters)
-|-- run_step1.py                     # Step 1 only pipeline
-|-- run_step2.py                     # Step 1 + Step 2 combined pipeline
-|-- run_step3.py                     # Step 3 LSTM training pipeline
+|-- run_step1.py                     # Step 1 only pipeline - Data Acquisition & Preparation
+|-- run_step2.py                     # Step 1 + Step 2 combined pipeline Feature Engineering & Target Definition
+|-- run_step3.py                     # Step 3 LSTM training pipeline ,Designing the Neural Network Architecture
 |-- requirements.txt                 # Python dependencies
 |-- .gitignore                       # Git ignore rules
 |
@@ -352,9 +349,6 @@ The low R² score is expected for this initial architecture given the extreme ch
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/<your-username>/algorithmic-trading-data-mining.git
-cd algorithmic-trading-data-mining
 
 # Create a virtual environment (recommended)
 python -m venv venv

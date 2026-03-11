@@ -12,6 +12,12 @@ Responsibilities:
        exploding gradients, a known LSTM issue.
     5. Record per-epoch metrics so training curves can be plotted.
 
+Step 4 enhancements:
+    * **min_delta** — val loss must improve by at least this threshold
+      to count as genuine improvement (prevents noise-driven resets).
+    * **Overfitting gap tracking** — each epoch records the gap
+      (val_loss − train_loss) so the divergence can be visualised.
+
 Design notes:
     * The trainer checkpoints the best model (lowest validation loss)
       and restores it at the end if early stopping triggered.
@@ -45,6 +51,7 @@ class EpochMetrics:
     val_loss: float
     learning_rate: float
     elapsed_sec: float
+    overfit_gap: float = 0.0       # (Step 4) val_loss − train_loss
 
 
 @dataclass
@@ -55,6 +62,7 @@ class TrainingResult:
     best_val_loss: float = float("inf")
     stopped_early: bool = False
     total_time_sec: float = 0.0
+    overfit_gap_at_best: float = 0.0   # (Step 4) gap at best epoch
 
 
 # ──────────────────────────────────────────────────────────────
@@ -76,10 +84,14 @@ class Trainer:
     weight_decay : float
     patience : int
         Early stopping patience (epochs).
+    min_delta : float
+        Minimum improvement in val loss to reset patience (Step 4).
     clip_norm : float
         Gradient clipping max norm.
     scheduler_factor : float
     scheduler_patience : int
+    quiet : bool
+        If True, suppress per-epoch print output.
     """
 
     def __init__(
@@ -92,19 +104,23 @@ class Trainer:
         lr: float | None = None,
         weight_decay: float | None = None,
         patience: int | None = None,
+        min_delta: float | None = None,
         clip_norm: float | None = None,
         scheduler_factor: float | None = None,
         scheduler_patience: int | None = None,
+        quiet: bool = False,
     ):
         self.model = model.to(device)
         self.device = device
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.quiet = quiet
 
         self.max_epochs = max_epochs or cfg.MAX_EPOCHS
         self.lr = lr or cfg.LEARNING_RATE
         self.weight_decay = weight_decay or cfg.WEIGHT_DECAY
         self.patience = patience or cfg.EARLY_STOPPING_PATIENCE
+        self.min_delta = min_delta if min_delta is not None else cfg.EARLY_STOPPING_MIN_DELTA
         self.clip_norm = clip_norm or cfg.GRADIENT_CLIP_NORM
         self.sched_factor = scheduler_factor or cfg.SCHEDULER_FACTOR
         self.sched_patience = scheduler_patience or cfg.SCHEDULER_PATIENCE
@@ -154,45 +170,53 @@ class Trainer:
 
             current_lr = self.optimiser.param_groups[0]["lr"]
 
+            # Step 4: compute overfitting gap
+            overfit_gap = val_loss - train_loss
+
             metrics = EpochMetrics(
                 epoch=epoch,
                 train_loss=train_loss,
                 val_loss=val_loss,
                 learning_rate=current_lr,
                 elapsed_sec=time.time() - t_epoch,
+                overfit_gap=overfit_gap,
             )
             result.history.append(metrics)
 
             # LR scheduling
             self.scheduler.step(val_loss)
 
-            # Early stopping check
-            if val_loss < self._best_val_loss:
+            # Early stopping check (Step 4: min_delta threshold)
+            if val_loss < self._best_val_loss - self.min_delta:
                 self._best_val_loss = val_loss
                 self._best_state = copy.deepcopy(self.model.state_dict())
                 self._epochs_without_improvement = 0
                 result.best_epoch = epoch
                 result.best_val_loss = val_loss
+                result.overfit_gap_at_best = overfit_gap
                 marker = " *"
             else:
                 self._epochs_without_improvement += 1
                 marker = ""
 
             # Logging
-            if epoch <= 5 or epoch % 5 == 0 or marker:
+            if not self.quiet and (epoch <= 5 or epoch % 5 == 0 or marker):
                 print(
                     f"  Epoch {epoch:>3}/{self.max_epochs} | "
                     f"Train Loss: {train_loss:.6f} | "
                     f"Val Loss: {val_loss:.6f} | "
+                    f"Gap: {overfit_gap:+.4f} | "
                     f"LR: {current_lr:.2e} | "
                     f"{metrics.elapsed_sec:.1f}s{marker}"
                 )
 
             if self._epochs_without_improvement >= self.patience:
-                print(
-                    f"\n  Early stopping at epoch {epoch} "
-                    f"(no improvement for {self.patience} epochs)"
-                )
+                if not self.quiet:
+                    print(
+                        f"\n  Early stopping at epoch {epoch} "
+                        f"(no improvement > {self.min_delta} for "
+                        f"{self.patience} epochs)"
+                    )
                 result.stopped_early = True
                 break
 
@@ -304,6 +328,8 @@ def print_training_summary(result: TrainingResult) -> None:
     if final:
         print(f"  Final train loss:    {final.train_loss:.6f}")
         print(f"  Final val loss:      {final.val_loss:.6f}")
+        print(f"  Final overfit gap:   {final.overfit_gap:+.4f}")
         print(f"  Final LR:            {final.learning_rate:.2e}")
+    print(f"  Gap at best epoch:   {result.overfit_gap_at_best:+.4f}")
     print(f"  Early stopped:       {result.stopped_early}")
     print(f"  Total training time: {result.total_time_sec:.1f}s")

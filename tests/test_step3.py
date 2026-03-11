@@ -162,6 +162,7 @@ class TestModel:
         assert out.shape == (batch, 1)
 
     def test_single_sample(self, small_model, small_seq_len):
+        small_model.eval()  # BatchNorm requires batch > 1 in training mode
         x = torch.randn(1, small_seq_len, len(cfg.FINAL_FEATURES))
         out = small_model(x)
         assert out.shape == (1, 1)

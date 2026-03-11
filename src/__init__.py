@@ -26,6 +26,18 @@ from src.dataset import (
 from src.model import SpreadLSTM, get_device, count_parameters
 from src.trainer import Trainer
 
+# Step 4
+from src.walk_forward_cv import (
+    generate_walk_forward_folds,
+    run_walk_forward_cv,
+    print_cv_summary,
+)
+from src.probability import (
+    SpreadCalibrator,
+    spread_to_proba_simple,
+    print_calibration_summary,
+)
+
 from src.visualisation import (
     # Step 1
     plot_elbow_curve,
@@ -41,6 +53,10 @@ from src.visualisation import (
     plot_training_curves,
     plot_predictions_vs_actual,
     plot_val_timeseries,
+    # Step 4
+    plot_cv_fold_metrics,
+    plot_overfitting_analysis,
+    plot_regularisation_comparison,
 )
 
 __all__ = [
@@ -59,10 +75,15 @@ __all__ = [
     "temporal_train_val_split", "SpreadSequenceDataset", "build_dataloaders",
     "SpreadLSTM", "get_device", "count_parameters",
     "Trainer",
+    # Step 4
+    "generate_walk_forward_folds", "run_walk_forward_cv", "print_cv_summary",
+    "SpreadCalibrator", "spread_to_proba_simple", "print_calibration_summary",
     # Visualisations
     "plot_elbow_curve", "plot_regime_scatter",
     "plot_data_overview", "plot_spread_distribution",
     "plot_autocorrelation", "plot_lag_scatter",
     "plot_rolling_timeseries", "plot_feature_correlation",
     "plot_training_curves", "plot_predictions_vs_actual", "plot_val_timeseries",
+    "plot_cv_fold_metrics", "plot_overfitting_analysis",
+    "plot_regularisation_comparison",
 ]
