@@ -558,3 +558,203 @@ def plot_val_timeseries(
     fig.savefig(path)
     plt.close(fig)
     return path
+
+
+# ══════════════════════════════════════════════════════════════
+# STEP 4 — PLOTS
+# ══════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────
+# WALK-FORWARD CV FOLD METRICS
+# ──────────────────────────────────────────────────────────────
+
+def plot_cv_fold_metrics(
+    folds: list,
+    save_dir: str | None = None,
+) -> str:
+    """
+    Bar chart comparing MAE, RMSE, and R² across walk-forward CV folds.
+
+    Parameters
+    ----------
+    folds : list[FoldMetrics]
+        From ``WalkForwardResult.folds``.
+
+    Returns the path to the saved PNG.
+    """
+    save_dir = save_dir or cfg.PLOT_DIR
+
+    fold_ids = [f"Fold {f.fold_id}" for f in folds]
+    maes = [f.val_mae for f in folds]
+    rmses = [f.val_rmse for f in folds]
+    r2s = [f.val_r2 for f in folds]
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 5))
+
+    # MAE
+    bars1 = ax1.bar(fold_ids, maes, color="#2196F3", edgecolor="none")
+    ax1.axhline(np.mean(maes), color="red", linestyle="--", linewidth=1,
+                label=f"Mean = {np.mean(maes):.2f}")
+    ax1.set_ylabel("MAE (EUR)")
+    ax1.set_title("Mean Absolute Error by Fold")
+    ax1.legend(fontsize=8)
+    for bar, v in zip(bars1, maes):
+        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                 f"{v:.1f}", ha="center", fontsize=8)
+
+    # RMSE
+    bars2 = ax2.bar(fold_ids, rmses, color="#E91E63", edgecolor="none")
+    ax2.axhline(np.mean(rmses), color="red", linestyle="--", linewidth=1,
+                label=f"Mean = {np.mean(rmses):.2f}")
+    ax2.set_ylabel("RMSE (EUR)")
+    ax2.set_title("Root Mean Squared Error by Fold")
+    ax2.legend(fontsize=8)
+    for bar, v in zip(bars2, rmses):
+        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                 f"{v:.1f}", ha="center", fontsize=8)
+
+    # R²
+    bars3 = ax3.bar(fold_ids, r2s, color="#4CAF50", edgecolor="none")
+    ax3.axhline(np.mean(r2s), color="red", linestyle="--", linewidth=1,
+                label=f"Mean = {np.mean(r2s):.4f}")
+    ax3.set_ylabel("R² Score")
+    ax3.set_title("R² Score by Fold")
+    ax3.legend(fontsize=8)
+    for bar, v in zip(bars3, r2s):
+        ax3.text(bar.get_x() + bar.get_width() / 2,
+                 bar.get_height() + 0.001,
+                 f"{v:.4f}", ha="center", fontsize=8)
+
+    fig.suptitle("Walk-Forward Cross-Validation — Per-Fold Performance",
+                 fontsize=13)
+    plt.tight_layout()
+
+    path = os.path.join(save_dir, "cv_fold_metrics.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+# ──────────────────────────────────────────────────────────────
+# OVERFITTING ANALYSIS
+# ──────────────────────────────────────────────────────────────
+
+def plot_overfitting_analysis(
+    history: list,
+    save_dir: str | None = None,
+) -> str:
+    """
+    Train vs validation loss with overfitting gap shaded.
+
+    Parameters
+    ----------
+    history : list[EpochMetrics]
+        From ``TrainingResult.history``.
+
+    Returns the path to the saved PNG.
+    """
+    save_dir = save_dir or cfg.PLOT_DIR
+
+    epochs = [m.epoch for m in history]
+    train_loss = [m.train_loss for m in history]
+    val_loss = [m.val_loss for m in history]
+    gaps = [m.overfit_gap for m in history]
+
+    best_epoch = epochs[np.argmin(val_loss)]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8),
+                                    gridspec_kw={"height_ratios": [2, 1]},
+                                    sharex=True)
+
+    # Loss curves
+    ax1.plot(epochs, train_loss, label="Train Loss", linewidth=1.5,
+             color="#2196F3")
+    ax1.plot(epochs, val_loss, label="Val Loss", linewidth=1.5,
+             color="#E91E63")
+    ax1.fill_between(epochs, train_loss, val_loss, alpha=0.15,
+                      color="#E91E63", label="Overfitting gap")
+    ax1.axvline(best_epoch, color="green", linestyle="--", alpha=0.7,
+                label=f"Best epoch = {best_epoch}")
+    ax1.set_ylabel("MSE Loss")
+    ax1.set_title("Overfitting Analysis — Train vs Validation Loss")
+    ax1.legend(fontsize=9)
+
+    # Gap over time
+    colours = ["#4CAF50" if g <= 0 else "#E91E63" for g in gaps]
+    ax2.bar(epochs, gaps, color=colours, edgecolor="none", width=0.8)
+    ax2.axhline(0, color="black", linewidth=0.5)
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Gap (Val − Train)")
+    ax2.set_title("Overfitting Gap per Epoch")
+
+    plt.tight_layout()
+    path = os.path.join(save_dir, "overfitting_analysis.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+# ──────────────────────────────────────────────────────────────
+# REGULARISATION COMPARISON
+# ──────────────────────────────────────────────────────────────
+
+def plot_regularisation_comparison(
+    history_step4: list,
+    cv_folds: list,
+    save_dir: str | None = None,
+) -> str:
+    """
+    Summary panel: training curves + CV fold consistency.
+
+    Parameters
+    ----------
+    history_step4 : list[EpochMetrics]
+        Final holdout training history from Step 4.
+    cv_folds : list[FoldMetrics]
+        Walk-forward CV fold results.
+
+    Returns the path to the saved PNG.
+    """
+    save_dir = save_dir or cfg.PLOT_DIR
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Left: training curves
+    epochs = [m.epoch for m in history_step4]
+    ax1.plot(epochs, [m.train_loss for m in history_step4],
+             label="Train Loss", linewidth=1.5, color="#2196F3")
+    ax1.plot(epochs, [m.val_loss for m in history_step4],
+             label="Val Loss", linewidth=1.5, color="#E91E63")
+    best_epoch = epochs[np.argmin([m.val_loss for m in history_step4])]
+    ax1.axvline(best_epoch, color="green", linestyle="--", alpha=0.7,
+                label=f"Best epoch = {best_epoch}")
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("MSE Loss")
+    ax1.set_title("Step 4 — Enhanced Training Curves")
+    ax1.legend(fontsize=8)
+
+    # Right: CV fold consistency
+    fold_ids = list(range(1, len(cv_folds) + 1))
+    maes = [f.val_mae for f in cv_folds]
+    rmses = [f.val_rmse for f in cv_folds]
+
+    x = np.arange(len(fold_ids))
+    width = 0.35
+    ax2.bar(x - width / 2, maes, width, label="MAE", color="#2196F3",
+            edgecolor="none")
+    ax2.bar(x + width / 2, rmses, width, label="RMSE", color="#E91E63",
+            edgecolor="none")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([f"Fold {i}" for i in fold_ids])
+    ax2.set_ylabel("EUR")
+    ax2.set_title("Walk-Forward CV — Fold Consistency")
+    ax2.legend(fontsize=8)
+
+    fig.suptitle("Step 4 — Regularisation & Cross-Validation Results",
+                 fontsize=13)
+    plt.tight_layout()
+
+    path = os.path.join(save_dir, "regularisation_comparison.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path

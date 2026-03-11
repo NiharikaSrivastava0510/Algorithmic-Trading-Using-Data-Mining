@@ -8,34 +8,44 @@ Responsibilities:
     2. Provide helper functions for device selection, model summary,
        and parameter counting.
 
-Architecture
-------------
+Architecture (Step 4 enhanced)
+------------------------------
 ::
 
     Input  (batch, seq_len, 45)
       │
       ▼
-    ┌──────────────────────┐
-    │  LSTM (2 layers)     │   hidden_size = 128
-    │  dropout = 0.2       │   captures temporal dependencies
-    └──────────┬───────────┘
+    ┌──────────────────────────┐
+    │  Input Dropout (0.1)     │   (Step 4) randomly zeroes features
+    └──────────┬───────────────┘
+               ▼
+    ┌──────────────────────────┐
+    │  LSTM (2 layers)         │   hidden_size = 128
+    │  dropout = 0.2           │   captures temporal dependencies
+    └──────────┬───────────────┘
                │  take last hidden state → (batch, 128)
                ▼
-    ┌──────────────────────┐
-    │  Linear(128 → 64)    │
-    │  ReLU                │
-    │  Dropout(0.3)        │
-    └──────────┬───────────┘
+    ┌──────────────────────────┐
+    │  Linear(128 → 64)        │
+    │  BatchNorm1d(64)         │   (Step 4) stabilises activations
+    │  ReLU                    │
+    │  Dropout(0.3)            │
+    └──────────┬───────────────┘
                ▼
-    ┌──────────────────────┐
-    │  Linear(64 → 1)      │   single node, **linear** activation
-    └──────────┬───────────┘   (continuous regression output)
+    ┌──────────────────────────┐
+    │  Linear(64 → 1)          │   single node, **linear** activation
+    └──────────┬───────────────┘   (continuous regression output)
                ▼
     Output  (batch, 1)
 
 Design notes:
     * Two stacked LSTM layers with inter-layer dropout mitigate
       vanishing gradients while regularising to avoid overfitting.
+    * **Input dropout** (Step 4) randomly zeroes entire feature
+      values each forward pass, forcing the network to learn
+      robust representations that never depend on a single feature.
+    * **Batch normalisation** (Step 4) in the dense head stabilises
+      internal activations and improves convergence.
     * The dense head reduces dimensionality gradually (128 → 64 → 1)
       with a ReLU non-linearity and dropout.
     * The output layer has **no activation** (linear), because we are
@@ -74,6 +84,9 @@ class SpreadLSTM(nn.Module):
         Width of the intermediate dense layer.
     dense_dropout : float
         Dropout probability in the dense head.
+    input_dropout : float
+        Dropout probability applied to the input features before the
+        LSTM (Step 4 enhancement).
     """
 
     def __init__(
@@ -84,6 +97,7 @@ class SpreadLSTM(nn.Module):
         lstm_dropout: float | None = None,
         dense_hidden: int | None = None,
         dense_dropout: float | None = None,
+        input_dropout: float | None = None,
     ):
         super().__init__()
 
@@ -93,6 +107,12 @@ class SpreadLSTM(nn.Module):
         self.lstm_dropout = lstm_dropout if lstm_dropout is not None else cfg.LSTM_DROPOUT
         self.dense_hidden = dense_hidden or cfg.DENSE_HIDDEN_SIZE
         self.dense_dropout = dense_dropout if dense_dropout is not None else cfg.DENSE_DROPOUT
+        self.input_dropout_rate = input_dropout if input_dropout is not None else cfg.INPUT_DROPOUT
+
+        # ── Step 4: Input dropout ──
+        # Randomly zeroes features before the LSTM, forcing the
+        # network to learn robust representations.
+        self.input_drop = nn.Dropout(self.input_dropout_rate)
 
         # ── LSTM encoder ──
         self.lstm = nn.LSTM(
@@ -103,9 +123,10 @@ class SpreadLSTM(nn.Module):
             dropout=self.lstm_dropout if self.num_layers > 1 else 0.0,
         )
 
-        # ── Dense regression head ──
+        # ── Dense regression head (Step 4: added BatchNorm1d) ──
         self.head = nn.Sequential(
             nn.Linear(self.hidden_size, self.dense_hidden),
+            nn.BatchNorm1d(self.dense_hidden),
             nn.ReLU(),
             nn.Dropout(self.dense_dropout),
             nn.Linear(self.dense_hidden, 1),  # single output, linear activation
@@ -125,6 +146,9 @@ class SpreadLSTM(nn.Module):
         torch.Tensor
             Shape ``(batch, 1)`` — predicted spread (scaled).
         """
+        # Step 4: apply input dropout to randomly deactivate features
+        x = self.input_drop(x)
+
         # lstm_out: (batch, seq_len, hidden_size)
         lstm_out, _ = self.lstm(x)
 
@@ -159,6 +183,9 @@ def print_model_summary(model: SpreadLSTM, device: torch.device) -> None:
     print(f"  Architecture: SpreadLSTM")
     print(f"  Device:       {device}")
     print()
+    print(f"  Input Regularisation (Step 4):")
+    print(f"    Input dropout: {model.input_dropout_rate}")
+    print()
     print(f"  LSTM Encoder:")
     print(f"    Input size:    {model.input_size} features")
     print(f"    Hidden size:   {model.hidden_size}")
@@ -166,15 +193,17 @@ def print_model_summary(model: SpreadLSTM, device: torch.device) -> None:
     print(f"    LSTM dropout:  {model.lstm_dropout}")
     print()
     print(f"  Dense Head:")
-    print(f"    {model.hidden_size} -> {model.dense_hidden} (ReLU, dropout={model.dense_dropout})")
+    print(f"    {model.hidden_size} -> {model.dense_hidden} (BatchNorm + ReLU, dropout={model.dense_dropout})")
     print(f"    {model.dense_hidden} -> 1 (linear activation)")
     print()
     print(f"  Total trainable parameters: {total_params:,}")
     print()
     print(f"  Anti-overfitting measures:")
+    print(f"    - Input feature dropout:     {model.input_dropout_rate}")
     print(f"    - LSTM inter-layer dropout:  {model.lstm_dropout}")
+    print(f"    - Batch normalisation:       BatchNorm1d({model.dense_hidden})")
     print(f"    - Dense head dropout:        {model.dense_dropout}")
     print(f"    - L2 regularisation:         weight_decay={cfg.WEIGHT_DECAY}")
-    print(f"    - Early stopping:            patience={cfg.EARLY_STOPPING_PATIENCE}")
+    print(f"    - Early stopping:            patience={cfg.EARLY_STOPPING_PATIENCE}, min_delta={cfg.EARLY_STOPPING_MIN_DELTA}")
     print(f"    - Gradient clipping:         max_norm={cfg.GRADIENT_CLIP_NORM}")
     print(f"    - LR scheduling:             ReduceLROnPlateau(factor={cfg.SCHEDULER_FACTOR})")

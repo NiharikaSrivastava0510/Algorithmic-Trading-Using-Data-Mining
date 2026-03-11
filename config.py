@@ -218,6 +218,27 @@ SCHEDULER_PATIENCE = 5
 VALIDATION_FRACTION = 0.2         # last 20 % of training data
 
 # ──────────────────────────────────────────────────────────────
+# STEP 4 — ENHANCED REGULARISATION
+# ──────────────────────────────────────────────────────────────
+
+# Input dropout — randomly zeroes features before the LSTM,
+# forcing the network to learn robust representations.
+INPUT_DROPOUT = 0.1
+
+# Enhanced early stopping — val loss must improve by at least
+# this much to reset the patience counter (prevents noise resets).
+EARLY_STOPPING_MIN_DELTA = 1e-4
+
+# ──────────────────────────────────────────────────────────────
+# STEP 4 — WALK-FORWARD CROSS-VALIDATION
+# ──────────────────────────────────────────────────────────────
+
+# Expanding-window time-series CV: train grows forward, val is
+# the next block.  Ensures no future data leaks into training.
+CV_N_FOLDS = 4                   # number of CV folds
+CV_VAL_MONTHS = 6                # months per validation window
+
+# ──────────────────────────────────────────────────────────────
 # DATA INTEGRITY
 # ──────────────────────────────────────────────────────────────
 EXPECTED_INTERVAL_MINUTES = 15   # the dataset is sampled at 15-min intervals
