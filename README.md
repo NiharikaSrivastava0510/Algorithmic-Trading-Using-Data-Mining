@@ -5,22 +5,23 @@
 A data-mining project that predicts the German electricity market spread (imbalance price minus day-ahead price) for every 15-minute interval, using the [ENSIMAG IF 2025 Algorithmic Trading](https://www.kaggle.com/competitions/ensimag-if-2025/data) competition dataset.
 
 
-
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Project Structure](#project-structure)
 3. [Dataset](#dataset)
-4. [Step 1 -- Data Acquisition & Preparation](#step-1----data-acquisition--preparation)
-5. [Step 2 -- Feature Engineering & Target Definition](#step-2----feature-engineering--target-definition)
-6. [Step 3 -- Designing the Neural Network Architecture](#step-3----designing-the-neural-network-architecture)
-7. [Step 4 -- Training & Mitigating Overfitting](#step-4----training--mitigating-overfitting)
-8. [Getting Started](#getting-started)
-9. [Running the Pipeline](#running-the-pipeline)
-10. [Running Tests](#running-tests)
-11. [Configuration](#configuration)
-12. [Outputs](#outputs)
-13. [References](#references)
+4. [Step 1 -- Data Acquisition & Preparation](#data-acquisition--preparation)
+5. [Step 2 -- Feature Engineering & Target Definition](#feature-engineering--target-definition)
+6. [Step 3 -- ARIMA & SARIMA Baseline Models](#arima--sarima-baseline-models)
+7. [Step 4 -- Designing the Neural Network Architecture](#designing-the-neural-network-architecture-LSTM)
+8. [Step 5 -- Training & Mitigating Overfitting](#training--mitigating-overfitting)
+9. [Probability Calibration](#probability-calibration)
+10. [Getting Started](#getting-started)
+11. [Running the Pipeline](#running-the-pipeline)
+12. [Running Tests](#running-tests)
+13. [Configuration](#configuration)
+14. [Outputs](#outputs)
+15. [References](#references)
 
 ---
 
@@ -30,17 +31,22 @@ Algorithmic trading models often perform well on historical data but struggle wi
 
 | Approach | Purpose |
 |---|---|
-| **Neural Network** | Primary deep-learning model for spread prediction |
-| **ARIMA** | Classical time-series baseline for comparison |
+| **ARIMA / SARIMA** | Classical time-series baselines for comparison |
+| **Neural Network (LSTM)** | Deep-learning model for spread prediction |
 | **LLM** | Advanced paradigm to explore pattern recognition |
 
 The pipeline is built in sequential steps:
 
-| Step | Name | Features Added | Script |
+| Step | Name | Script | Description |
 |---|---|---|---|
-| **1** | Data Acquisition & Preparation | 21 features (core + temporal + domain + regime) | `run_step1.py` |
-| **2** | Feature Engineering & Target Definition | +24 features (lags + rolling stats) = **45 total** | `run_step2.py` |
-| **3** | Designing the Neural Network Architecture | LSTM model with 230K parameters | `run_step3.py` |
+| **1** | Data Acquisition & Preparation | `run_data_acquisition.py` | 21 features (core + temporal + domain + regime) |
+| **2** | Feature Engineering & Target Definition | `run_feature_engineering.py` | +24 features (lags + rolling stats) = **45 total** |
+| **3** | ARIMA Baseline | `run_arima.py` | Pure univariate ARIMA(2,d,2) |
+| **4** | ARIMAX Baseline | `run_arimax.py` | ARIMAX(2,d,2) with exogenous features |
+| **5** | SARIMA Model | `run_sarima.py` | SARIMAX(1,d,1)x(1,1,1,96) with seasonality |
+| **6** | LSTM Neural Network | `run_lstm.py` | LSTM model with 230K parameters |
+| **7** | Training & Mitigating Overfitting | `run_training_overfitting.py` | Walk-forward CV, enhanced regularisation |
+
 
 ---
 
@@ -50,9 +56,13 @@ The pipeline is built in sequential steps:
 Algorithmic Trading/
 |
 |-- config.py                        # Central configuration (paths, features, hyperparameters)
-|-- run_step1.py                     # Step 1 only pipeline - Data Acquisition & Preparation
-|-- run_step2.py                     # Step 1 + Step 2 combined pipeline Feature Engineering & Target Definition
-|-- run_step3.py                     # Step 3 LSTM training pipeline ,Designing the Neural Network Architecture
+|-- run_data_acquisition.py          # Data Acquisition & Preparation
+|-- run_feature_engineering.py       # Feature Engineering & Target Definition
+|-- run_lstm.py                      # LSTM neural network training
+|-- run_training_overfitting.py      # Training & Mitigating Overfitting
+|-- run_arima.py                     # ARIMA(2,d,2) univariate baseline
+|-- run_arimax.py                    # ARIMAX(2,d,2) with exogenous features
+|-- run_sarima.py                    # SARIMAX(1,d,1)x(1,1,1,96) seasonal model
 |-- requirements.txt                 # Python dependencies
 |-- .gitignore                       # Git ignore rules
 |
@@ -69,13 +79,18 @@ Algorithmic Trading/
 |   |-- dataset.py                   # 3(a) Sequence windowing and data loading
 |   |-- model.py                     # 3(b) SpreadLSTM architecture definition
 |   |-- trainer.py                   # 3(c) Training loop with early stopping
+|   |-- walk_forward_cv.py           # 4(c) Expanding-window time-series CV
+|   |-- probability.py               # Logistic calibration: spread -> P(spread > 0)
 |   +-- visualisation.py             # Plotting functions for all steps
 |
-|-- tests/                           # Unit tests
+|-- tests/                           # Unit tests (112 total)
 |   |-- __init__.py
 |   |-- test_step1.py                # 24 tests for Step 1 modules
 |   |-- test_step2.py                # 24 tests for Step 2 modules
-|   +-- test_step3.py                # 22 tests for Step 3 modules
+|   |-- test_step3.py                # 22 tests for Step 3 modules
+|   |-- test_step4.py                # 22 tests for Step 4 modules
+|   +-- test_probability.py          # 20 tests for probability calibration
+|
 |
 |-- data/
 |   +-- raw/                         # Raw CSVs (gitignored; download from Kaggle)
@@ -93,8 +108,14 @@ Algorithmic Trading/
     |   |-- kmeans_model.pkl         # Fitted KMeans model (5 regimes)
     |   |-- feature_config.pkl       # Feature name lists for downstream steps
     |   |-- spread_lstm.pt           # Trained LSTM weights + model config
+    |   |-- spread_lstm_step4.pt     # Step 4 LSTM with enhanced regularisation
+    |   |-- spread_calibrator.pkl    # Logistic calibration model (spread -> probability)
     |   |-- training_history.csv     # Per-epoch training and validation metrics
-    |   +-- submission.csv           # Test set predictions (Kaggle submission)
+    |   |-- cv_results.csv           # Walk-forward CV per-fold metrics
+    |   |-- submission.csv           # LSTM P(spread > 0) predictions (Kaggle)
+    |   |-- submission_arima.csv     # ARIMA P(spread > 0) predictions
+    |   |-- submission_arimax.csv    # ARIMAX P(spread > 0) predictions
+    |   +-- submission_sarima.csv    # SARIMA P(spread > 0) predictions
     |
     +-- plots/                       # Generated visualisations
         |-- data_overview.png        # Time-series of wind, solar, load, spread
@@ -106,8 +127,14 @@ Algorithmic Trading/
         |-- rolling_timeseries.png   # 2-week close-up with rolling mean/std bands
         |-- feature_correlation.png  # Full 45-feature correlation heatmap
         |-- training_curves.png      # Train/val loss and LR over epochs
-        |-- predictions_vs_actual_validation.png  # Scatter: predicted vs actual spread
-        +-- val_timeseries.png       # 7-day validation time-series overlay
+        |-- predictions_vs_actual_*.png  # Scatter: predicted vs actual spread
+        |-- val_timeseries.png       # 7-day validation time-series overlay
+        |-- cv_fold_metrics.png      # Step 4: MAE/RMSE/R² across CV folds
+        |-- overfitting_analysis.png # Step 4: train vs val loss with gap
+        |-- arima_diagnostics.png    # ARIMA: ACF, PACF, residuals, fit, validation
+        |-- arimax_diagnostics.png   # ARIMAX: diagnostics with exogenous features
+        |-- sarima_diagnostics.png   # SARIMA: diagnostics with seasonal component
+        |-- *_forecast_week1.png     # First-week test forecast probability plots
 ```
 
 ---
@@ -121,9 +148,11 @@ The data comes from the **ENSIMAG IF 2025** Kaggle competition and contains Germ
 | `train.csv` | 140,157 | `date`, `wind`, `solar`, `load`, `spread` | 2020-01-01 to 2023-12-31 |
 | `imbalances.csv` | 140,157 | `date`, `imbalances` | 2020-01-01 to 2023-12-31 |
 | `test.csv` | 24,138 | `ID`, `date`, `wind`, `solar`, `load` | 2024-01-01 to 2024-09-08 |
-| `sample.csv` | 24,138 | `ID`, `forecast` | Submission template |
+| `sample.csv` | 24,138 | `ID`, `forecast` | Submission template (probabilities) |
 
 **Target variable:** `spread` -- the difference between the imbalance price and the day-ahead price (EUR).
+
+**Submission format:** `P(spread > 0)` -- the probability that the spread will be positive for each 15-minute interval.
 
 ---
 
@@ -251,9 +280,50 @@ After Step 2, the neural network receives **45 features**:
 
 ---
 
-## Step 3 -- Designing the Neural Network Architecture
+## ARIMA & SARIMA Baseline Models
 
-### 3(a) LSTM Network for Sequential Time-Series
+Three classical time-series models serve as baselines against which the LSTM is compared. They form a progression from simple to complex:
+
+### ARIMA -- Pure Univariate Baseline
+
+| Setting | Value |
+|---|---|
+| Model | ARIMA(2,d,2) |
+| Exogenous features | None |
+| Seasonal component | None |
+| Training window | ~1 year (35,040 rows) |
+| Script | `run_arima.py` |
+
+The simplest possible baseline: forecasts the spread using only its own past values (2 AR terms) and past forecast errors (2 MA terms). The differencing order `d` is determined automatically via the ADF stationarity test.
+
+### ARIMAX -- With Exogenous Regressors
+
+| Setting | Value |
+|---|---|
+| Model | ARIMAX(2,d,2) |
+| Exogenous features | wind, solar, load + Fourier (daily/weekly) + time features |
+| Seasonal component | None (seasonality captured by Fourier terms) |
+| Training window | ~1 year (35,040 rows) |
+| Script | `run_arimax.py` |
+
+Extends ARIMA by incorporating external market signals. Fourier terms (3 daily + 2 weekly harmonics) capture periodic patterns without the computational cost of seasonal differencing.
+
+### SARIMA -- Seasonal Model
+
+| Setting | Value |
+|---|---|
+| Model | SARIMAX(1,d,1)x(1,1,1,96) |
+| Exogenous features | wind, solar, load + Fourier + time + domain features (20 total) |
+| Seasonal component | m=96 (one full day of 15-min intervals) |
+| Training window | ~1 year (35,040 rows) |
+| Script | `run_sarima.py` |
+
+The most expressive ARIMA-family model. Adds seasonal differencing with period m=96 to explicitly capture daily periodicity, plus domain features (`net_load`, `renewable_ratio`, `total_renewable`) matching the LSTM pipeline.
+
+
+##  Designing the Neural Network Architecture
+
+###  LSTM Network for Sequential Time-Series
 
 An **LSTM (Long Short-Term Memory)** network is used to capture the temporal dependencies in electricity market data. LSTMs are specifically designed for sequential data where long-range patterns matter -- their gating mechanism selectively remembers or forgets information across the 96-step (24-hour) input window.
 
@@ -261,7 +331,7 @@ An **LSTM (Long Short-Term Memory)** network is used to capture the temporal dep
 
 **Sequence windowing:** The prepared data is segmented into sliding windows of 96 timesteps (one full day). For each window, the model predicts the spread at the final timestep. This gives the network a full 24-hour context to learn intra-day patterns (morning ramps, solar peaks, evening demand).
 
-### 3(b) Input Layer Mapping
+###  Input Layer Mapping
 
 The input layer maps the 45-feature vector from Step 2 into the LSTM encoder:
 
@@ -275,21 +345,26 @@ Input shape:  (batch, 96, 45)
 
 A 2-layer stacked LSTM processes the sequence, and only the final hidden state (capturing the full 24-hour context) is passed to the dense head.
 
-### 3(c) Dense Output Layer
+###  Dense Output Layer
 
-The output is a **single node with linear activation**, appropriate for predicting a continuous value (the spread in EUR). No sigmoid or ReLU is applied to the final layer, allowing the model to predict both positive and negative spread values.
+The output is a **single node with linear activation**, appropriate for predicting a continuous value (the spread in EUR). No sigmoid or ReLU is applied to the final layer, allowing the model to predict both positive and negative spread values. Raw EUR predictions are then converted to P(spread > 0) via [logistic calibration](#probability-calibration) for Kaggle submission.
 
 ### Architecture Summary
 
 ```
 SpreadLSTM(
+  Input Dropout:   0.1 (Step 4: randomly zeroes features)
+
   LSTM Encoder:
     Input:       45 features
     Hidden:      128 units x 2 layers
     Dropout:     0.2 (between LSTM layers)
 
   Dense Head:
-    Linear:      128 -> 64  +  ReLU  +  Dropout(0.3)
+    Linear:      128 -> 64
+    BatchNorm1d: 64 (Step 4: stabilises activations)
+    ReLU
+    Dropout:     0.3
     Linear:      64  -> 1   (linear activation)
 
   Total parameters: 230,017
@@ -298,14 +373,16 @@ SpreadLSTM(
 
 ### Anti-Overfitting Measures
 
-Six complementary regularisation strategies prevent the model from memorising training noise:
+Eight complementary regularisation strategies prevent the model from memorising training noise:
 
 | Technique | Setting | Purpose |
 |---|---|---|
+| **Input dropout** | 0.1 | Randomly zeroes features before the LSTM (Step 4) |
 | **LSTM inter-layer dropout** | 0.2 | Regularises recurrent representations between stacked layers |
-| **Dense head dropout** | 0.3 | Prevents co-adaptation in the classification head |
+| **Batch normalisation** | BatchNorm1d(64) | Stabilises activations in the dense head (Step 4) |
+| **Dense head dropout** | 0.3 | Prevents co-adaptation in the prediction head |
 | **L2 regularisation** | weight_decay = 1e-5 | Penalises large weights via AdamW optimiser |
-| **Early stopping** | patience = 10 | Halts training when validation loss stops improving |
+| **Early stopping** | patience = 10, min_delta = 1e-4 | Halts training when validation loss stops improving |
 | **Gradient clipping** | max_norm = 1.0 | Guards against exploding gradients in LSTM backprop |
 | **LR scheduling** | ReduceLROnPlateau (factor=0.5) | Halves learning rate when validation loss plateaus |
 
@@ -339,6 +416,57 @@ The low R² score is expected for this initial architecture given the extreme ch
 
 ---
 
+##  Training & Mitigating Overfitting
+
+###  Strict Regularisation
+
+This Step  enhances the base LSTM architecture with two additional regularisation techniques:
+
+- **Input dropout (0.1)** -- randomly zeroes input features before the LSTM, forcing the network to learn robust representations that don't rely on any single feature.
+- **Batch normalisation** -- `BatchNorm1d(64)` in the dense head stabilises activations and accelerates convergence.
+
+###  Enhanced Early Stopping
+
+The early stopping criterion is refined with a **minimum delta threshold** (`min_delta = 1e-4`). Validation loss must improve by at least this amount to reset the patience counter, preventing noise-driven resets that would allow the model to continue training past the true optimum.
+
+Each epoch also tracks the **overfitting gap** (`val_loss - train_loss`), providing a quantitative measure of generalisation health that is visualised in the diagnostic plots.
+
+###  Walk-Forward Cross-Validation
+
+A strict **expanding-window time-series CV** ensures that future data never leaks into training:
+
+- **4 folds**, each with a 6-month validation window
+- The training set expands forward in time; validation is always the next chronological block
+- Fold boundaries are computed sequentially (cursor-based) to guarantee non-overlapping validation periods
+- Each fold trains a fresh model with early stopping and reports MAE, RMSE, R², and overfitting gap
+
+This directly tests whether the model generalises across different market regimes and time periods, rather than a single arbitrary train/val split.
+
+---
+
+
+### Common Design Across All Three
+
+- **ADF stationarity test** determines differencing order `d`
+- **Walk-forward validation** on the last 7 days (672 timesteps)
+- **Logistic calibration** converts raw spread forecasts to P(spread > 0)
+- **Train-only normalisation** prevents data leakage into test
+- **Diagnostic plots**: ACF, PACF, residuals, in-sample fit, validation probabilities
+
+---
+
+## Probability Calibration
+
+The Kaggle competition expects **P(spread > 0)** -- probability forecasts between 0 and 1 -- not raw EUR spread values. All models (LSTM, ARIMA, ARIMAX, SARIMA) use the same calibration approach:
+
+1. **Train the model** to predict raw spread values (regression)
+2. **Fit a `LogisticRegression`** on validation data: `predicted_spread_eur` -> `actual_sign`
+3. **Apply the calibrator** to test predictions to produce `P(spread > 0)`
+
+This is implemented in `src/probability.py` via the `SpreadCalibrator` class, which also reports directional accuracy and stores calibration coefficients. A model-free `spread_to_proba_simple()` sigmoid fallback is also available.
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -349,6 +477,9 @@ The low R² score is expected for this initial architecture given the extreme ch
 ### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/<your-username>/algorithmic-trading-data-mining.git
+cd algorithmic-trading-data-mining
 
 # Create a virtual environment (recommended)
 python -m venv venv
@@ -377,27 +508,35 @@ pip install -r requirements.txt
 ## Running the Pipeline
 
 ```bash
-# Step 1 only (data acquisition + preparation)
-python run_step1.py
+# Step 1: Data Acquisition & Preparation
+python run_data_acquisition.py
 
-# Step 1 + Step 2 combined (feature engineering)
-python run_step2.py
+# Step 2: Feature Engineering & Target Definition
+python run_feature_engineering.py
 
-# Step 3: LSTM training (requires Step 2 outputs)
-python run_step3.py
+# Step 3: LSTM Training (requires Step 2 outputs)
+python run_lstm.py
+
+# Step 4: Training & Mitigating Overfitting (requires Step 2 outputs)
+python run_training_overfitting.py
+
+# ARIMA/SARIMA Baselines (require raw CSVs only)
+python run_arima.py        # ~1 min
+python run_arimax.py       # ~2 min
+python run_sarima.py       # ~5-10 min (m=96 seasonal is slow)
 
 # Custom data directory
-python run_step2.py --data-dir /path/to/your/csvs
+python run_feature_engineering.py --data-dir /path/to/your/csvs
 ```
 
-Steps 1-2 complete in approximately **12 seconds**. Step 3 training takes **~3.5 minutes** on Apple MPS (longer on CPU-only machines). All outputs are written to the `outputs/` directory.
+Steps 1-2 complete in approximately **12 seconds**. LSTM training takes **~3.5 minutes** on Apple MPS (longer on CPU-only machines). All outputs are written to the `outputs/` directory.
 
 ---
 
 ## Running Tests
 
 ```bash
-# Run ALL tests (70 total)
+# Run ALL tests (112 total)
 pytest tests/ -v
 
 # Step 1 tests only (24 tests)
@@ -408,6 +547,12 @@ pytest tests/test_step2.py -v
 
 # Step 3 tests only (22 tests)
 pytest tests/test_step3.py -v
+
+# Step 4 tests only (22 tests)
+pytest tests/test_step4.py -v
+
+# Probability calibration tests (20 tests)
+pytest tests/test_probability.py -v
 ```
 
 The test suite covers:
@@ -425,12 +570,18 @@ The test suite covers:
 | `split` | 4 | Chronological ordering, no overlap, fraction correctness |
 | `model` | 7 | Output shape, float dtype, linear activation, parameter count, device |
 | `trainer` | 5 | Training loop, loss tracking, prediction shapes, early stopping |
+| `enhanced_model` | 8 | Input dropout, batch norm, backward compatibility |
+| `enhanced_trainer` | 6 | Min delta, overfit gap tracking, quiet mode |
+| `walk_forward_cv` | 6 | Fold generation, expanding window, no leakage, non-overlapping |
+| `probability` | 20 | Calibrator lifecycle, output range, monotonicity, sigmoid fallback |
 
 ---
 
 ## Configuration
 
 All settings are centralised in [`config.py`](config.py):
+
+### LSTM Settings
 
 | Setting | Default | Description |
 |---|---|---|
@@ -442,12 +593,29 @@ All settings are centralised in [`config.py`](config.py):
 | `SEQUENCE_LENGTH` | `96` | LSTM input window (24 hours) |
 | `LSTM_HIDDEN_SIZE` | `128` | LSTM hidden state dimension |
 | `LSTM_NUM_LAYERS` | `2` | Number of stacked LSTM layers |
+| `INPUT_DROPOUT` | `0.1` | Feature dropout before LSTM |
 | `BATCH_SIZE` | `256` | Training batch size |
 | `LEARNING_RATE` | `1e-3` | Initial AdamW learning rate |
 | `MAX_EPOCHS` | `100` | Maximum training epochs |
 | `EARLY_STOPPING_PATIENCE` | `10` | Epochs without improvement before stopping |
+| `EARLY_STOPPING_MIN_DELTA` | `1e-4` | Minimum improvement to reset patience |
 | `VALIDATION_FRACTION` | `0.2` | Chronological train/val split ratio |
+| `CV_N_FOLDS` | `4` | Walk-forward cross-validation folds |
+| `CV_VAL_MONTHS` | `6` | Months per CV validation window |
 | `RANDOM_STATE` | `42` | Global seed for reproducibility |
+
+### ARIMA / SARIMA Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `ARIMA_TRAIN_ROWS` | `35040` | Training window (~1 year of 15-min data) |
+| `ARIMA_VAL_DAYS` | `7` | Walk-forward validation hold-out days |
+| `ARIMA_ORDER` | `(2, 0, 2)` | ARIMA(p,d,q) order |
+| `ARIMAX_ORDER` | `(2, 0, 2)` | ARIMAX(p,d,q) order |
+| `SARIMA_ORDER` | `(1, 0, 1)` | SARIMA non-seasonal order |
+| `SARIMA_SEASONAL_ORDER` | `(1, 1, 1, 96)` | SARIMA seasonal (P,D,Q,m) |
+| `ARIMA_DAILY_HARMONICS` | `3` | Fourier sin/cos pairs for 24-h cycle |
+| `ARIMA_WEEKLY_HARMONICS` | `2` | Fourier sin/cos pairs for 7-day cycle |
 
 Feature lists (`CORE_FEATURES`, `TEMPORAL_FEATURES`, `DOMAIN_FEATURES`, `REGIME_FEATURES`, `LAG_FEATURES`, `ROLLING_FEATURES`, `FINAL_FEATURES`) are also defined here so every module draws from a single source of truth.
 
@@ -455,37 +623,49 @@ Feature lists (`CORE_FEATURES`, `TEMPORAL_FEATURES`, `DOMAIN_FEATURES`, `REGIME_
 
 ## Outputs
 
-After running the full pipeline (`run_step2.py` then `run_step3.py`), the `outputs/` directory contains:
+After running the full pipeline, the `outputs/` directory contains:
 
 ### Artefacts (`outputs/artefacts/`)
 
-| File | Step | Description |
+| File | Source | Description |
 |---|---|---|
-| `train_prepared.csv` | 2 | 140,157 rows x 64 columns -- fully featured, scaled training data |
-| `test_prepared.csv` | 2 | 24,138 rows x 55 columns -- fully featured, scaled test data |
-| `feature_scaler.pkl` | 2 | Fitted `StandardScaler` for 39 numerical features |
-| `target_scaler.pkl` | 2 | Fitted `StandardScaler` for the spread target |
-| `kmeans_model.pkl` | 1 | Fitted `KMeans` model (k=5) for regime assignment |
-| `feature_config.pkl` | 2 | Feature name lists for downstream steps |
-| `spread_lstm.pt` | 3 | Trained LSTM model weights, config, and validation metrics |
-| `training_history.csv` | 3 | Per-epoch train loss, val loss, and learning rate |
-| `submission.csv` | 3 | 24,138 test set predictions formatted for Kaggle submission |
+| `train_prepared.csv` | Step 2 | 140,157 rows x 64 columns -- fully featured, scaled training data |
+| `test_prepared.csv` | Step 2 | 24,138 rows x 55 columns -- fully featured, scaled test data |
+| `feature_scaler.pkl` | Step 2 | Fitted `StandardScaler` for 39 numerical features |
+| `target_scaler.pkl` | Step 2 | Fitted `StandardScaler` for the spread target |
+| `kmeans_model.pkl` | Step 1 | Fitted `KMeans` model (k=5) for regime assignment |
+| `feature_config.pkl` | Step 2 | Feature name lists for downstream steps |
+| `spread_lstm.pt` | Step 3 | Trained LSTM model weights, config, and validation metrics |
+| `spread_lstm_step4.pt` | Step 4 | LSTM with enhanced regularisation + CV metrics |
+| `spread_calibrator.pkl` | Step 3 | Logistic calibration model (spread -> probability) |
+| `training_history.csv` | Step 3/4 | Per-epoch train loss, val loss, and learning rate |
+| `cv_results.csv` | Step 4 | Walk-forward CV per-fold metrics |
+| `submission.csv` | LSTM | P(spread > 0) predictions for Kaggle submission |
+| `submission_arima.csv` | ARIMA | ARIMA baseline probability predictions |
+| `submission_arimax.csv` | ARIMAX | ARIMAX baseline probability predictions |
+| `submission_sarima.csv` | SARIMA | SARIMA baseline probability predictions |
 
 ### Plots (`outputs/plots/`)
 
-| File | Step | Description |
+| File | Source | Description |
 |---|---|---|
-| `data_overview.png` | 1 | Four-panel time-series of wind, solar, load, and spread |
-| `spread_distribution.png` | 1 | Histogram and box plot of the target variable |
-| `kmeans_elbow.png` | 1 | Inertia vs k with the selected k=5 marked |
-| `kmeans_regimes.png` | 1 | Three-panel scatter plots coloured by market regime |
-| `spread_autocorrelation.png` | 2 | Autocorrelation bar chart justifying lag selection |
-| `lag_scatter.png` | 2 | Spread vs lagged spread at 15-min, 1-h, 24-h with correlation |
-| `rolling_timeseries.png` | 2 | 2-week close-up of load/wind/solar with rolling mean and std bands |
-| `feature_correlation.png` | 2 | Full 45-feature correlation heatmap |
-| `training_curves.png` | 3 | Train/val loss and learning rate schedule over epochs |
-| `predictions_vs_actual_validation.png` | 3 | Scatter plot of predicted vs actual spread (EUR) |
-| `val_timeseries.png` | 3 | 7-day overlay of actual and predicted spread on validation set |
+| `data_overview.png` | Step 1 | Four-panel time-series of wind, solar, load, and spread |
+| `spread_distribution.png` | Step 1 | Histogram and box plot of the target variable |
+| `kmeans_elbow.png` | Step 1 | Inertia vs k with the selected k=5 marked |
+| `kmeans_regimes.png` | Step 1 | Three-panel scatter plots coloured by market regime |
+| `spread_autocorrelation.png` | Step 2 | Autocorrelation bar chart justifying lag selection |
+| `lag_scatter.png` | Step 2 | Spread vs lagged spread at 15-min, 1-h, 24-h with correlation |
+| `rolling_timeseries.png` | Step 2 | 2-week close-up of load/wind/solar with rolling mean and std bands |
+| `feature_correlation.png` | Step 2 | Full 45-feature correlation heatmap |
+| `training_curves.png` | Step 3/4 | Train/val loss and learning rate schedule over epochs |
+| `predictions_vs_actual_*.png` | Step 3/4 | Scatter plot of predicted vs actual spread (EUR) |
+| `val_timeseries.png` | Step 3/4 | 7-day overlay of actual and predicted spread on validation set |
+| `cv_fold_metrics.png` | Step 4 | Bar chart of MAE/RMSE/R² across CV folds |
+| `overfitting_analysis.png` | Step 4 | Train vs val loss with overfitting gap shaded |
+| `arima_diagnostics.png` | ARIMA | ACF, PACF, residuals, in-sample fit, validation probs |
+| `arimax_diagnostics.png` | ARIMAX | Diagnostics with exogenous features |
+| `sarima_diagnostics.png` | SARIMA | Diagnostics with seasonal component |
+| `*_forecast_week1.png` | ARIMA/ARIMAX/SARIMA | First-week test forecast probability plots |
 
 ---
 
